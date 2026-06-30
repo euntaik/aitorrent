@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package aitorrent;
+
+service InferenceService {
+  rpc ForwardPass (ForwardRequest) returns (ForwardResponse);
+  rpc HealthCheck (HealthRequest) returns (HealthResponse);
+  rpc GetCapability (CapabilityRequest) returns (CapabilityResponse);
+}
+
+message ForwardRequest {
+  string session_id = 1;
+  string model_id = 2;
+  int32 start_layer = 3;
+  int32 end_layer = 4;
+  bytes input_tensor = 5;
+  string dtype = 6;
+  repeated int32 shape = 7;
+  bool use_cache = 8;
+}
+
+message ForwardResponse {
+  bytes output_tensor = 1;
+  repeated int32 shape = 2;
+  string dtype = 3;
+  int64 tokens_processed = 4;
+  double credits_charged = 5;
+}
+
+message HealthRequest {
+  string peer_id = 1;
+}
+
+message HealthResponse {
+  string peer_id = 1;
+  bool healthy = 2;
+  int32 active_sessions = 3;
+  double latency_ms = 4;
+}
+
+message CapabilityRequest {}
+
+message CapabilityResponse {
+  string peer_id = 1;
+  string gpu_name = 2;
+  int32 vram_free_mb = 3;
+  int32 ram_free_mb = 4;
+  double compute_tflops = 5;
+  repeated string available_models = 6;
+  repeated LayerRange served_layers = 7;
+}
+
+message LayerRange {
+  string model_id = 1;
+  int32 start_layer = 2;
+  int32 end_layer = 3;
+}
