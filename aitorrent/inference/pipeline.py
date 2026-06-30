@@ -8,6 +8,7 @@ import torch
 
 from aitorrent.credit.ledger import CreditLedger
 from aitorrent.credit.pricing import CreditPricer
+from aitorrent.inference.failover import FailoverManager, MAX_RETRIES
 from aitorrent.inference.session import InferenceSession
 from aitorrent.model.loader import TransformerShard
 from aitorrent.model.manifest import ModelManifest
@@ -34,12 +35,14 @@ class InferencePipeline:
         stages: list[PipelineStage],
         ledger: CreditLedger,
         pricer: CreditPricer,
+        failover: FailoverManager | None = None,
     ):
         self._node = node
         self._manifest = manifest
         self._stages = stages
         self._ledger = ledger
         self._pricer = pricer
+        self._failover = failover
 
     async def generate(
         self,
@@ -139,19 +142,48 @@ class InferencePipeline:
         session: InferenceSession,
         hidden: torch.Tensor,
     ) -> torch.Tensor:
-        output, tokens = await connection.forward_pass(
-            session_id=session.session_id,
-            model_id=self._manifest.model_id,
-            hidden_states=hidden,
-            use_cache=True,
+        last_error = None
+        current_conn = connection
+        current_peer = stage.peer_info
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                output, tokens = await current_conn.forward_pass(
+                    session_id=session.session_id,
+                    model_id=self._manifest.model_id,
+                    hidden_states=hidden,
+                    use_cache=True,
+                )
+
+                num_layers = current_peer.end_layer - current_peer.start_layer
+                credits = self._pricer.price_tokens(tokens, num_layers=num_layers)
+                self._ledger.debit(current_conn.peer_id, credits, f"inference:{session.session_id}")
+                session.record_tokens(tokens, credits)
+                return output
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Remote forward to %s failed (attempt %d): %s",
+                    current_peer.peer_id, attempt + 1, e,
+                )
+
+                if self._failover is None:
+                    break
+
+                self._failover.report_failure(current_peer.peer_id)
+                result = await self._failover.find_replacement(
+                    current_peer, self._manifest.model_id,
+                )
+                if not result.success:
+                    break
+                current_conn = result.replacement
+                current_peer = result.replacement_peer
+                logger.info("Retrying with replacement peer %s", current_peer.peer_id)
+
+        raise RuntimeError(
+            f"Remote forward failed after {MAX_RETRIES} attempts: {last_error}"
         )
-
-        num_layers = stage.peer_info.end_layer - stage.peer_info.start_layer
-        credits = self._pricer.price_tokens(tokens, num_layers=num_layers)
-        self._ledger.debit(connection.peer_id, credits, f"inference:{session.session_id}")
-        session.record_tokens(tokens, credits)
-
-        return output
 
     def _sample(
         self, logits: torch.Tensor, temperature: float, top_p: float

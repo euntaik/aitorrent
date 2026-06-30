@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from aitorrent.config import AITorrentConfig
-from aitorrent.model.loader import ShardLoader, TransformerShard
-from aitorrent.model.manifest import ModelManifest
+from aitorrent.credit.crypto import PeerIdentity
+from aitorrent.model.loader import TransformerShard
 from aitorrent.model.profiler import HardwareProfile, HardwareProfiler
 from aitorrent.network.transport import (
     GrpcServer,
@@ -24,6 +23,7 @@ class PeerInfo:
     peer_id: str
     address: str
     profile: HardwareProfile | None = None
+    pubkey: bytes = b""
     start_layer: int = 0
     end_layer: int = 0
     includes_embed: bool = False
@@ -33,9 +33,12 @@ class PeerInfo:
 class PeerNode:
     """Represents this node in the AITorrent network."""
 
-    def __init__(self, config: AITorrentConfig):
+    def __init__(self, config: AITorrentConfig, identity: PeerIdentity | None = None):
         self.config = config
-        self.peer_id = str(uuid.uuid4())[:12]
+        self.identity = identity or PeerIdentity.load_or_create(
+            config.data_dir / "identity.pem"
+        )
+        self.peer_id = self.identity.peer_id
         self.profile: HardwareProfile | None = None
         self.servicer = InferenceServicer()
         self.server = GrpcServer(self.servicer, config.network.grpc_port)
@@ -60,6 +63,7 @@ class PeerNode:
         self._running = False
         for conn in self.connections.values():
             await conn.close()
+        self.connections.clear()
         await self.server.stop()
 
     def load_shard(self, model_id: str, shard: TransformerShard) -> None:
@@ -74,8 +78,21 @@ class PeerNode:
         self.connections[peer_info.peer_id] = conn
         return conn
 
+    async def disconnect_peer(self, peer_id: str) -> None:
+        conn = self.connections.pop(peer_id, None)
+        if conn:
+            await conn.close()
+
     def get_connection(self, peer_id: str) -> PeerConnection | None:
         return self.connections.get(peer_id)
+
+    def peer_info(self) -> PeerInfo:
+        return PeerInfo(
+            peer_id=self.peer_id,
+            address=self.address,
+            profile=self.profile,
+            pubkey=self.identity.public_key_bytes(),
+        )
 
     @property
     def address(self) -> str:
