@@ -66,7 +66,11 @@ class InferencePipeline:
             token_id = next_token.item()
             generated_ids.append(token_id)
 
-            ids_tensor = next_token.unsqueeze(0).unsqueeze(0).to(device)
+            # No distributed KV cache yet: re-feed the full sequence each step
+            # so new tokens attend to the whole context.
+            ids_tensor = torch.cat(
+                [ids_tensor, next_token.unsqueeze(0).to(device)], dim=1
+            )
 
         return generated_ids
 
@@ -88,7 +92,9 @@ class InferencePipeline:
             next_token = self._sample(logits, temperature, top_p)
             token_id = next_token.item()
             yield token_id
-            ids_tensor = next_token.unsqueeze(0).unsqueeze(0).to(device)
+            ids_tensor = torch.cat(
+                [ids_tensor, next_token.unsqueeze(0).to(device)], dim=1
+            )
 
     async def _full_forward(
         self,

@@ -207,7 +207,7 @@ def seed(
     device: str = typer.Option("auto", "--device", "-d", help="Device"),
     discover: bool = typer.Option(True, "--discover/--no-discover", help="Enable LAN discovery"),
 ):
-    """Seed model shards — serve layers without running the API endpoint."""
+    """Seed model shards - serve layers without running the API endpoint."""
     logging.basicConfig(level=logging.INFO, format="%(name)s | %(message)s")
 
     config = AITorrentConfig()
@@ -293,7 +293,15 @@ def balance(
         console.print("[yellow]No credit database found. Run 'aitorrent serve' first.[/]")
         raise typer.Exit(1)
 
-    ledger = CreditLedger("local", db_path, bootstrap_credits=0)
+    # Use the node's real identity so balances match the serving process
+    identity_path = Path(data_dir).expanduser() / "identity.pem"
+    if identity_path.exists():
+        from aitorrent.credit.crypto import PeerIdentity
+        peer_id = PeerIdentity.load(identity_path).peer_id
+    else:
+        peer_id = "local"
+
+    ledger = CreditLedger(peer_id, db_path, bootstrap_credits=0)
     table = Table(title="Credit Balance")
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")

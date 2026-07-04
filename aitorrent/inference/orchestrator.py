@@ -115,21 +115,28 @@ class PipelineOrchestrator:
         num_layers = self._manifest.num_layers
 
         if local_layers is not None and len(peers) == 2:
-            # Manual 2-peer split
+            # Manual 2-peer split — also record ranges on peer_info so that
+            # credit pricing sees the correct layer counts
             local = peers[0]
             remote = peers[1]
+            local.start_layer, local.end_layer = local_layers
+            local.includes_embed = local_layers[0] == 0
+            local.includes_head = local_layers[1] == num_layers
+            remote.start_layer, remote.end_layer = local_layers[1], num_layers
+            remote.includes_embed = local_layers[1] == 0
+            remote.includes_head = True
             return [
                 PeerSlot(
                     peer_info=local, connection=None, local_shard=None,
-                    start_layer=local_layers[0], end_layer=local_layers[1],
-                    includes_embed=(local_layers[0] == 0),
-                    includes_head=(local_layers[1] == num_layers),
+                    start_layer=local.start_layer, end_layer=local.end_layer,
+                    includes_embed=local.includes_embed,
+                    includes_head=local.includes_head,
                 ),
                 PeerSlot(
                     peer_info=remote, connection=None, local_shard=None,
-                    start_layer=local_layers[1], end_layer=num_layers,
-                    includes_embed=(local_layers[1] == 0),
-                    includes_head=True,
+                    start_layer=remote.start_layer, end_layer=remote.end_layer,
+                    includes_embed=remote.includes_embed,
+                    includes_head=remote.includes_head,
                 ),
             ]
 

@@ -24,6 +24,7 @@ class TransformerShard:
     norm: nn.Module | None
     device: str
     dtype: torch.dtype
+    rotary_emb: nn.Module | None = None
 
     def forward(
         self,
@@ -33,20 +34,33 @@ class TransformerShard:
     ) -> tuple[torch.Tensor, dict | None]:
         new_cache = {} if kv_cache is not None else None
 
+        if position_ids is None:
+            seq_len = hidden_states.shape[1]
+            position_ids = torch.arange(
+                seq_len, device=hidden_states.device
+            ).unsqueeze(0)
+
+        # Modern HF layers expect (cos, sin) computed at the model level
+        position_embeddings = None
+        if self.rotary_emb is not None:
+            position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
         for i, layer in enumerate(self.layers):
             layer_idx = self.start_layer + i
             past_kv = kv_cache.get(layer_idx) if kv_cache else None
 
             if hasattr(layer, "self_attn"):
                 # HuggingFace-style layer
-                outputs = layer(
-                    hidden_states,
+                kwargs = dict(
                     position_ids=position_ids,
                     past_key_value=past_kv,
                     use_cache=kv_cache is not None,
                 )
-                hidden_states = outputs[0]
-                if new_cache is not None and len(outputs) > 1:
+                if position_embeddings is not None:
+                    kwargs["position_embeddings"] = position_embeddings
+                outputs = layer(hidden_states, **kwargs)
+                hidden_states = outputs[0] if isinstance(outputs, tuple) else outputs
+                if new_cache is not None and isinstance(outputs, tuple) and len(outputs) > 1:
                     new_cache[layer_idx] = outputs[1]
             else:
                 hidden_states = layer(hidden_states)
@@ -73,9 +87,7 @@ class ShardLoader:
         )
         full_model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
-            torch_dtype=dtype,
-            device_map="cpu",
-            low_cpu_mem_usage=True,
+            dtype=dtype,
         )
 
         base = self._get_model_base(full_model)
@@ -105,10 +117,11 @@ class ShardLoader:
             norm=norm,
             device=device,
             dtype=dtype,
+            rotary_emb=getattr(base, "rotary_emb", None),
         )
 
         # Move only the shard to target device, delete full model
-        for component in [shard.layers, shard.embed, shard.head, shard.norm]:
+        for component in [shard.layers, shard.embed, shard.head, shard.norm, shard.rotary_emb]:
             if component is not None:
                 component.to(device)
         del full_model

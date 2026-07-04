@@ -49,7 +49,7 @@ class PeerNode:
         profiler = HardwareProfiler()
         self.profile = profiler.profile()
         logger.info(
-            "Node %s starting — GPU: %s, VRAM: %dMB, RAM: %dMB, %.2f TFLOPS",
+            "Node %s starting - GPU: %s, VRAM: %dMB, RAM: %dMB, %.2f TFLOPS",
             self.peer_id,
             self.profile.gpu_name or "none",
             self.profile.gpu_vram_free_mb,
