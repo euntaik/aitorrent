@@ -78,7 +78,7 @@ async def test_three_peer_forward_matches_baseline(model_parts):
 
         with torch.no_grad():
             h = shard_a.embed(input_ids)
-            h, _ = shard_a.forward(h)
+            h = shard_a.forward(h)
 
             h, _ = await conn_b.forward_pass(
                 session_id="test", model_id="tiny-test",
@@ -159,8 +159,9 @@ async def test_three_peer_pipeline_generates_tokens(model_parts, tmp_path):
         )
 
         input_ids = torch.tensor([1, 50, 100], dtype=torch.long)
+        # Custom tiny layers don't implement KV caching
         generated = await pipeline.generate(
-            input_ids, max_new_tokens=5, temperature=0.0,
+            input_ids, max_new_tokens=5, temperature=0.0, use_cache=False,
         )
 
         assert len(generated) == 8
@@ -246,7 +247,7 @@ async def test_signed_credit_settlement_three_peers(model_parts, tmp_path):
 
         input_ids = torch.tensor([1, 50, 100], dtype=torch.long)
         generated = await pipeline.generate(
-            input_ids, max_new_tokens=3, temperature=0.0,
+            input_ids, max_new_tokens=3, temperature=0.0, use_cache=False,
         )
         assert len(generated) == 6
 

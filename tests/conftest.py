@@ -88,6 +88,53 @@ def make_shard(
     )
 
 
+def build_tiny_llama(
+    num_layers: int = NUM_LAYERS,
+    hidden_size: int = HIDDEN_SIZE,
+    vocab_size: int = VOCAB_SIZE,
+):
+    """Random-init tiny Llama for exercising the real HF layer code path
+    (rotary embeddings, DynamicCache) without downloading anything."""
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(7)
+    cfg = LlamaConfig(
+        hidden_size=hidden_size,
+        num_hidden_layers=num_layers,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        intermediate_size=hidden_size * 2,
+        vocab_size=vocab_size,
+        max_position_embeddings=128,
+    )
+    return LlamaForCausalLM(cfg).eval()
+
+
+def make_llama_shard(
+    model,
+    start_layer: int,
+    end_layer: int,
+    includes_embed: bool = False,
+    includes_head: bool = False,
+) -> TransformerShard:
+    base = model.model
+    shard_layers = torch.nn.ModuleList(
+        [base.layers[i] for i in range(start_layer, end_layer)]
+    )
+    return TransformerShard(
+        model_id="tiny-llama",
+        start_layer=start_layer,
+        end_layer=end_layer,
+        layers=shard_layers,
+        embed=base.embed_tokens if includes_embed else None,
+        head=model.lm_head if includes_head else None,
+        norm=base.norm if includes_head else None,
+        device="cpu",
+        dtype=torch.float32,
+        rotary_emb=base.rotary_emb,
+    )
+
+
 @pytest.fixture
 def tiny_manifest():
     return ModelManifest(

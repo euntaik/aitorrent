@@ -29,43 +29,52 @@ class TransformerShard:
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: torch.Tensor | None = None,
-        kv_cache: dict | None = None,
-    ) -> tuple[torch.Tensor, dict | None]:
-        new_cache = {} if kv_cache is not None else None
+        past_length: int = 0,
+        kv_cache=None,
+    ) -> torch.Tensor:
+        """Run this shard's layers.
 
-        if position_ids is None:
-            seq_len = hidden_states.shape[1]
-            position_ids = torch.arange(
-                seq_len, device=hidden_states.device
-            ).unsqueeze(0)
+        kv_cache is a transformers DynamicCache owned by this shard; it is
+        updated in place. past_length is the number of tokens already cached,
+        used to offset positions for rotary embeddings and cache writes.
+        """
+        seq_len = hidden_states.shape[1]
+        device = hidden_states.device
+        position_ids = torch.arange(
+            past_length, past_length + seq_len, device=device
+        ).unsqueeze(0)
+        cache_position = torch.arange(
+            past_length, past_length + seq_len, device=device
+        )
 
         # Modern HF layers expect (cos, sin) computed at the model level
         position_embeddings = None
         if self.rotary_emb is not None:
             position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        for i, layer in enumerate(self.layers):
-            layer_idx = self.start_layer + i
-            past_kv = kv_cache.get(layer_idx) if kv_cache else None
-
+        for layer in self.layers:
             if hasattr(layer, "self_attn"):
                 # HuggingFace-style layer
                 kwargs = dict(
                     position_ids=position_ids,
-                    past_key_value=past_kv,
+                    past_key_values=kv_cache,
                     use_cache=kv_cache is not None,
+                    cache_position=cache_position,
                 )
                 if position_embeddings is not None:
                     kwargs["position_embeddings"] = position_embeddings
                 outputs = layer(hidden_states, **kwargs)
                 hidden_states = outputs[0] if isinstance(outputs, tuple) else outputs
-                if new_cache is not None and isinstance(outputs, tuple) and len(outputs) > 1:
-                    new_cache[layer_idx] = outputs[1]
             else:
                 hidden_states = layer(hidden_states)
 
-        return hidden_states, new_cache
+        return hidden_states
+
+    def cache_length(self, kv_cache) -> int:
+        """Number of tokens already stored in kv_cache for this shard."""
+        if kv_cache is None:
+            return 0
+        return kv_cache.get_seq_length(self.start_layer)
 
 
 class ShardLoader:

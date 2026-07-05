@@ -8,6 +8,7 @@ import grpc
 import grpc.aio
 import torch
 
+from aitorrent.inference.kv_cache import KVCacheManager
 from aitorrent.model.loader import TransformerShard
 from aitorrent.network.serialization import (
     deserialize_tensor,
@@ -31,9 +32,9 @@ _identity = lambda x: x
 class InferenceServicer:
     """Handles incoming ForwardPass requests from other peers."""
 
-    def __init__(self):
+    def __init__(self, kv_cache_ttl_sec: int = 300):
         self._shards: dict[str, TransformerShard] = {}
-        self._kv_caches: dict[str, dict] = {}
+        self._cache_manager = KVCacheManager(ttl_sec=kv_cache_ttl_sec)
 
     def register_shard(self, model_id: str, shard: TransformerShard) -> None:
         self._shards[model_id] = shard
@@ -52,19 +53,38 @@ class InferenceServicer:
         hidden = deserialize_tensor(req["input_tensor"], req["dtype"], req["shape"], shard.device)
         session_id = req["session_id"]
         use_cache = req.get("use_cache", False)
-        kv_cache = self._kv_caches.get(session_id) if use_cache else None
+        past_length = req.get("past_length", 0)
+
+        kv_cache = None
+        if use_cache:
+            cache_key = f"{session_id}:{model_id}"
+            kv_cache = self._cache_manager.get(cache_key)
+            server_past = shard.cache_length(kv_cache)
+            if server_past != past_length:
+                # Cache out of sync (evicted, restarted, or replayed request).
+                # The client recovers by re-sending the full sequence under a
+                # fresh session.
+                self._cache_manager.evict(cache_key)
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"KV cache mismatch: server has {server_past} tokens, "
+                    f"request expects {past_length}",
+                )
+            if kv_cache is None:
+                from transformers.cache_utils import DynamicCache
+                kv_cache = DynamicCache()
 
         with torch.no_grad():
             if shard.embed is not None and hidden.dtype == torch.long:
                 hidden = shard.embed(hidden)
-            output, new_cache = shard.forward(hidden, kv_cache=kv_cache)
+            output = shard.forward(hidden, past_length=past_length, kv_cache=kv_cache)
             if shard.norm is not None:
                 output = shard.norm(output)
             if shard.head is not None:
                 output = shard.head(output)
 
-        if use_cache and new_cache is not None:
-            self._kv_caches[session_id] = new_cache
+        if use_cache:
+            self._cache_manager.put(f"{session_id}:{model_id}", kv_cache)
 
         tokens = req["shape"][1] if len(req["shape"]) > 1 else 1
         out_data, out_dtype, out_shape = serialize_tensor(output)
@@ -78,12 +98,13 @@ class InferenceServicer:
     async def handle_health(self, request_bytes: bytes, context) -> bytes:
         return pack_message({
             "healthy": True,
-            "active_sessions": len(self._kv_caches),
+            "active_sessions": self._cache_manager.active_sessions,
             "models": list(self._shards.keys()),
         })
 
     def clear_session(self, session_id: str) -> None:
-        self._kv_caches.pop(session_id, None)
+        for model_id in self._shards:
+            self._cache_manager.evict(f"{session_id}:{model_id}")
 
 
 class _Handler(grpc.GenericRpcHandler):
@@ -158,6 +179,7 @@ class PeerConnection:
         model_id: str,
         hidden_states: torch.Tensor,
         use_cache: bool = True,
+        past_length: int = 0,
     ) -> tuple[torch.Tensor, int]:
         if not self.channel:
             raise RuntimeError("Not connected")
@@ -170,6 +192,7 @@ class PeerConnection:
             "dtype": dtype_str,
             "shape": shape,
             "use_cache": use_cache,
+            "past_length": past_length,
         })
 
         call = self.channel.unary_unary(

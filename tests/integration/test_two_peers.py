@@ -67,7 +67,7 @@ async def test_two_peer_forward_matches_baseline(tmp_path):
         with torch.no_grad():
             # Stage 1: local on peer A
             h = shard_a.embed(input_ids)
-            h, _ = shard_a.forward(h)
+            h = shard_a.forward(h)
 
             # Stage 2: remote on peer B
             h_remote, tokens = await conn_b.forward_pass(
@@ -147,8 +147,9 @@ async def test_two_peer_pipeline_generates_tokens(tmp_path):
         )
 
         input_ids = torch.tensor([1, 50, 100], dtype=torch.long)
+        # Custom tiny layers don't implement KV caching
         generated = await pipeline.generate(
-            input_ids, max_new_tokens=5, temperature=0.0
+            input_ids, max_new_tokens=5, temperature=0.0, use_cache=False
         )
 
         # input (3) + generated (5) = 8 tokens

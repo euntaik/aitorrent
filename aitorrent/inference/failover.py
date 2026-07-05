@@ -85,9 +85,12 @@ class FailoverManager:
         return FailoverResult(success=False, error="No replacement peer available")
 
     def _covers_layers(self, candidate: PeerInfo, needed: PeerInfo) -> bool:
+        # A serving peer always executes its entire shard, so the replacement
+        # must hold exactly the same layer range (a superset would run extra
+        # layers on the incoming hidden state).
         return (
-            candidate.start_layer <= needed.start_layer
-            and candidate.end_layer >= needed.end_layer
+            candidate.start_layer == needed.start_layer
+            and candidate.end_layer == needed.end_layer
         )
 
 

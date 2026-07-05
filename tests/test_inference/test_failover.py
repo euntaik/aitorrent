@@ -58,10 +58,12 @@ class TestFailoverManager:
         needed = _peer("n", 0, 10)
         assert failover._covers_layers(candidate, needed)
 
-    def test_covers_layers_superset(self, failover):
+    def test_covers_layers_superset_rejected(self, failover):
+        # A serving peer runs its whole shard, so a superset range would
+        # execute extra layers — only exact matches are valid replacements.
         candidate = _peer("c", 0, 20)
         needed = _peer("n", 5, 15)
-        assert failover._covers_layers(candidate, needed)
+        assert not failover._covers_layers(candidate, needed)
 
     def test_covers_layers_insufficient(self, failover):
         candidate = _peer("c", 5, 10)
