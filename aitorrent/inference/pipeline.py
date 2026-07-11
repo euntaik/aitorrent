@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import grpc
 import grpc.aio
@@ -33,6 +34,11 @@ class PipelineStage:
     peer_info: PeerInfo
     connection: PeerConnection | None  # None if local
     local_shard: TransformerShard | None  # Set if this stage runs locally
+    # Runtime status for monitoring/GUI
+    state: str = "idle"  # "idle" | "running"
+    last_active: float = 0.0
+    total_tokens: int = 0
+    last_latency_ms: float = 0.0
 
 
 class InferencePipeline:
@@ -151,22 +157,30 @@ class InferencePipeline:
         hidden = None
 
         for idx, stage in enumerate(self._stages):
-            if stage.local_shard is not None:
-                hidden = await self._local_forward(
-                    idx, stage.local_shard, session,
-                    step_input if hidden is None else hidden,
-                    past_length, use_cache,
-                )
-            elif stage.connection is not None:
-                if hidden is None:
-                    raise RuntimeError("First stage must be local (embedding required)")
-                hidden = await self._remote_forward(
-                    stage, session, hidden, past_length, use_cache
-                )
-            else:
-                raise RuntimeError(
-                    f"Stage for peer {stage.peer_info.peer_id} has no shard or connection"
-                )
+            stage.state = "running"
+            t0 = time.perf_counter()
+            try:
+                if stage.local_shard is not None:
+                    hidden = await self._local_forward(
+                        idx, stage.local_shard, session,
+                        step_input if hidden is None else hidden,
+                        past_length, use_cache,
+                    )
+                elif stage.connection is not None:
+                    if hidden is None:
+                        raise RuntimeError("First stage must be local (embedding required)")
+                    hidden = await self._remote_forward(
+                        stage, session, hidden, past_length, use_cache
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Stage for peer {stage.peer_info.peer_id} has no shard or connection"
+                    )
+                stage.total_tokens += step_input.shape[1]
+            finally:
+                stage.state = "idle"
+                stage.last_latency_ms = (time.perf_counter() - t0) * 1000
+                stage.last_active = time.time()
 
         return hidden
 
@@ -279,6 +293,27 @@ class InferencePipeline:
         stage.connection = result.replacement
         stage.peer_info = result.replacement_peer
         logger.info("Stage failover: %s -> %s", old_peer, result.replacement_peer.peer_id)
+
+    def status(self) -> dict:
+        """Snapshot of pipeline topology and per-stage activity for monitoring."""
+        return {
+            "model_id": self._manifest.model_id,
+            "num_layers": self._manifest.num_layers,
+            "stages": [
+                {
+                    "peer_id": s.peer_info.peer_id,
+                    "address": s.peer_info.address,
+                    "start_layer": s.peer_info.start_layer,
+                    "end_layer": s.peer_info.end_layer,
+                    "is_local": s.local_shard is not None,
+                    "state": s.state,
+                    "last_active": s.last_active,
+                    "total_tokens": s.total_tokens,
+                    "last_latency_ms": round(s.last_latency_ms, 1),
+                }
+                for s in self._stages
+            ],
+        }
 
     def _clear_local_caches(self, session: InferenceSession) -> None:
         for idx in range(len(self._stages)):

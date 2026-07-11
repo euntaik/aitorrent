@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AITorrent</title>
+<style>
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f0efec;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --hairline: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #2a78d6;
+    --accent-soft: rgba(42, 120, 214, 0.12);
+    --good: #0ca30c;
+    --warning: #b97f00;
+    --user-bubble: #eceae4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #232322;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --hairline: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #3987e5;
+      --accent-soft: rgba(57, 135, 229, 0.18);
+      --good: #0ca30c;
+      --warning: #fab219;
+      --user-bubble: #2c2c2a;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  #app { display: flex; height: 100vh; }
+
+  /* ── left rail ─────────────────────────────── */
+  #rail {
+    width: 52px; flex: none;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 0; gap: 10px;
+    border-right: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  #rail .logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 12px; letter-spacing: -0.5px;
+  }
+  #rail .spacer { flex: 1; }
+  #rail .ver { font-size: 10px; color: var(--muted); }
+
+  /* ── center column ─────────────────────────── */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  #topbar {
+    height: 52px; flex: none;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  #topbar .model { font-weight: 600; font-size: 14px; }
+  #topbar .conn {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on   { background: var(--good); }
+  .dot.off  { background: var(--muted); }
+  .dot.busy { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  #chat {
+    flex: 1; overflow-y: auto;
+    padding: 28px 0 12px;
+  }
+  .msgwrap { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+  .msg { margin-bottom: 20px; display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .msg .bubble {
+    max-width: 85%;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble {
+    background: var(--user-bubble);
+    border-radius: 14px;
+    padding: 10px 14px;
+  }
+  .msg.assistant .bubble { padding: 2px 0; }
+  .msg.assistant .meta {
+    font-size: 11px; color: var(--muted); margin-top: 6px;
+  }
+  .cursor {
+    display: inline-block; width: 7px; height: 15px;
+    background: var(--accent); vertical-align: text-bottom;
+    animation: pulse 0.8s ease-in-out infinite;
+  }
+  #empty {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px;
+    color: var(--muted);
+  }
+  #empty .big { font-size: 20px; font-weight: 600; color: var(--ink-2); }
+
+  #inputbar { flex: none; padding: 12px 24px 20px; }
+  #inputbox {
+    max-width: 720px; margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  #prompt {
+    width: 100%; border: none; outline: none; resize: none;
+    background: transparent; color: var(--ink);
+    font: inherit; max-height: 140px;
+  }
+  #prompt::placeholder { color: var(--muted); }
+  #inputrow { display: flex; align-items: center; gap: 10px; }
+  #inputrow .opts {
+    display: flex; gap: 10px; font-size: 11px; color: var(--muted);
+    align-items: center;
+  }
+  #inputrow input[type=number] {
+    width: 52px; background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--hairline); border-radius: 6px;
+    font-size: 11px; padding: 2px 5px;
+  }
+  #send {
+    margin-left: auto;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 9px; width: 34px; height: 34px;
+    font-size: 15px; cursor: pointer; flex: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #send:disabled { opacity: 0.4; cursor: default; }
+
+  /* ── right panel ───────────────────────────── */
+  #side {
+    width: 320px; flex: none;
+    border-left: 1px solid var(--hairline);
+    background: var(--surface);
+    overflow-y: auto;
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .card {
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .card h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .stage { padding: 10px 0; }
+  .stage + .stage { border-top: 1px solid var(--hairline); }
+  .stage .head {
+    display: flex; align-items: center; gap: 7px; margin-bottom: 3px;
+  }
+  .badge {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 1px 6px; border-radius: 5px; flex: none;
+  }
+  .badge.local  { background: var(--accent-soft); color: var(--accent); }
+  .badge.remote { background: var(--surface-2); color: var(--ink-2); }
+  .stage .peer {
+    font-size: 12px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .stage .state {
+    margin-left: auto; display: flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--ink-2); flex: none;
+  }
+  .stage .sub {
+    font-size: 11px; color: var(--muted); margin-bottom: 7px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .cells { display: flex; flex-wrap: wrap; gap: 3px; }
+  .cell {
+    width: 14px; height: 14px; border-radius: 3.5px;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    transition: background 0.25s, border-color 0.25s;
+  }
+  .stage.running .cell {
+    background: var(--accent); border-color: var(--accent);
+    animation: pulse 0.9s ease-in-out infinite;
+  }
+  .stage.recent .cell {
+    background: var(--accent-soft); border-color: transparent;
+  }
+
+  #balance {
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  #balance .unit { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  .crow {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--ink-2); padding: 3px 0;
+  }
+  .crow .v { font-variant-numeric: tabular-nums; }
+  .crow .earned { color: var(--good); }
+  #txlist { margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 8px; }
+  #txlist .tx {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 11px; color: var(--muted); padding: 2px 0;
+    font-variant-numeric: tabular-nums;
+  }
+  #txlist .tx .to { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  @media (max-width: 900px) { #side { display: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="rail">
+    <div class="logo">AT</div>
+    <div class="spacer"></div>
+    <div class="ver">v0.1</div>
+  </aside>
+
+  <main id="main">
+    <div id="topbar">
+      <span class="model" id="modelName">AITorrent</span>
+      <span class="conn"><span class="dot off" id="connDot"></span><span id="connText">연결 중…</span></span>
+    </div>
+
+    <div id="chat">
+      <div id="empty">
+        <div class="big">AITorrent</div>
+        <div>분산 네트워크에서 추론을 실행합니다</div>
+      </div>
+      <div class="msgwrap" id="messages"></div>
+    </div>
+
+    <div id="inputbar">
+      <div id="inputbox">
+        <textarea id="prompt" rows="1" placeholder="메시지를 입력하세요…"></textarea>
+        <div id="inputrow">
+          <div class="opts">
+            <label>max tokens <input type="number" id="maxTokens" value="60" min="1" max="512"></label>
+            <label>temp <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1"></label>
+          </div>
+          <button id="send" title="보내기">➤</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside id="side">
+    <div class="card">
+      <h2>모델 파이프라인</h2>
+      <div id="stages"><div style="color:var(--muted);font-size:12px">파이프라인 정보를 불러오는 중…</div></div>
+    </div>
+    <div class="card">
+      <h2>내 크레딧</h2>
+      <div id="balance">–<span class="unit">credits</span></div>
+      <div class="crow"><span>총 획득</span><span class="v earned" id="cEarned">–</span></div>
+      <div class="crow"><span>총 사용</span><span class="v" id="cSpent">–</span></div>
+      <div id="txlist"></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let modelId = null;
+let generating = false;
+const history = [];
+
+/* ── status polling ──────────────────────────── */
+async function poll() {
+  try {
+    const r = await fetch("/aitorrent/status");
+    if (!r.ok) throw new Error(r.status);
+    const s = await r.json();
+    modelId = s.model_id;
+    $("modelName").textContent = s.model_id;
+    $("connDot").className = "dot " + (generating ? "busy" : "on");
+    $("connText").textContent = generating ? "생성 중" : "온라인";
+    renderStages(s);
+    renderCredits(s);
+  } catch (e) {
+    $("connDot").className = "dot off";
+    $("connText").textContent = "오프라인";
+  }
+}
+
+function renderStages(s) {
+  const now = s.server_time;
+  const html = s.stages.map((st) => {
+    const running = st.state === "running";
+    const recent = !running && now - st.last_active < 0.8;
+    const cls = running ? "running" : recent ? "recent" : "";
+    const stateLabel = running
+      ? '<span class="dot busy"></span>실행 중'
+      : recent
+        ? '<span class="dot on"></span>방금 실행'
+        : '<span class="dot off"></span>대기';
+    const n = st.end_layer - st.start_layer;
+    let cells = "";
+    for (let i = 0; i < n; i++) cells += '<div class="cell"></div>';
+    const lat = st.last_latency_ms ? `${st.last_latency_ms} ms` : "";
+    return `
+      <div class="stage ${cls}">
+        <div class="head">
+          <span class="badge ${st.is_local ? "local" : "remote"}">${st.is_local ? "LOCAL" : "REMOTE"}</span>
+          <span class="peer" title="${st.peer_id}">${st.peer_id.slice(0, 14)}</span>
+          <span class="state">${stateLabel}</span>
+        </div>
+        <div class="sub">
+          <span>레이어 ${st.start_layer}–${st.end_layer - 1} (${n}개)</span>
+          <span>${st.address}</span>
+          ${lat ? `<span>${lat}</span>` : ""}
+        </div>
+        <div class="cells">${cells}</div>
+      </div>`;
+  }).join("");
+  $("stages").innerHTML = html;
+}
+
+function renderCredits(s) {
+  if (!s.credits) return;
+  $("balance").innerHTML =
+    s.credits.balance.toFixed(2) + '<span class="unit">credits</span>';
+  $("cEarned").textContent = "+" + s.credits.total_earned.toFixed(2);
+  $("cSpent").textContent = "−" + s.credits.total_spent.toFixed(2);
+  const txs = s.recent_transactions || [];
+  $("txlist").innerHTML = txs.map((t) => {
+    const d = new Date(t.timestamp * 1000);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `<div class="tx">
+      <span class="to">→ ${t.to_peer.slice(0, 10)}</span>
+      <span>${t.amount.toFixed(2)}</span>
+      <span>${hh}:${mm}</span>
+    </div>`;
+  }).join("");
+}
+
+/* ── chat ────────────────────────────────────── */
+function addMsg(role, text) {
+  $("empty").style.display = "none";
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = '<div class="bubble"></div>';
+  div.querySelector(".bubble").textContent = text;
+  $("messages").appendChild(div);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return div.querySelector(".bubble");
+}
+
+async function send() {
+  const text = $("prompt").value.trim();
+  if (!text || generating || !modelId) return;
+  $("prompt").value = "";
+  autosize();
+  addMsg("user", text);
+  history.push({ role: "user", content: text });
+
+  generating = true;
+  $("send").disabled = true;
+  const bubble = addMsg("assistant", "");
+  bubble.innerHTML = '<span class="cursor"></span>';
+
+  let acc = "";
+  const t0 = performance.now();
+  try {
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: modelId,
+        messages: history,
+        max_tokens: parseInt($("maxTokens").value) || 60,
+        temperature: parseFloat($("temperature").value) || 0.7,
+        stream: true,
+      }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let nTokens = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        if (payload === "[DONE]") continue;
+        const delta = JSON.parse(payload).choices[0].delta;
+        if (delta.content) {
+          acc += delta.content;
+          nTokens++;
+          bubble.textContent = acc;
+          bubble.insertAdjacentHTML("beforeend", '<span class="cursor"></span>');
+          $("chat").scrollTop = $("chat").scrollHeight;
+        }
+      }
+    }
+    bubble.textContent = acc || "(빈 응답)";
+    const secs = (performance.now() - t0) / 1000;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${nTokens} tokens · ${secs.toFixed(1)}s · ${(nTokens / secs).toFixed(1)} tok/s`;
+    bubble.parentElement.querySelector(".bubble").after(meta);
+    history.push({ role: "assistant", content: acc });
+  } catch (e) {
+    bubble.textContent = "오류: " + e.message;
+  } finally {
+    generating = false;
+    $("send").disabled = false;
+    $("prompt").focus();
+  }
+}
+
+function autosize() {
+  const p = $("prompt");
+  p.style.height = "auto";
+  p.style.height = Math.min(p.scrollHeight, 140) + "px";
+}
+
+$("send").addEventListener("click", send);
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("prompt").addEventListener("input", autosize);
+
+poll();
+setInterval(poll, 400);
+</script>
+</body>
+</html>
