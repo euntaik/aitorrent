@@ -4,14 +4,17 @@ import asyncio
 import json
 import time
 import uuid
+from pathlib import Path
 from typing import AsyncIterator
 
 import torch
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="AITorrent", version="0.1.0")
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 # These get set by the CLI when the server starts
 _pipeline = None
@@ -136,6 +139,39 @@ async def _stream_response(
     }
     yield f"data: {json.dumps(final)}\n\n"
     yield "data: [DONE]\n\n"
+
+
+@app.get("/", include_in_schema=False)
+async def gui():
+    index = _STATIC_DIR / "index.html"
+    if not index.exists():
+        raise HTTPException(404, "GUI not installed")
+    return HTMLResponse(index.read_text(encoding="utf-8"))
+
+
+@app.get("/aitorrent/status")
+async def get_status():
+    """Pipeline topology, per-stage activity, and credit summary for the GUI."""
+    if _pipeline is None:
+        raise HTTPException(503, "Pipeline not initialized")
+    status = _pipeline.status()
+    status["server_time"] = time.time()
+    if _ledger is not None:
+        status["credits"] = {
+            "balance": _ledger.balance,
+            "total_earned": _ledger.total_earned(),
+            "total_spent": _ledger.total_spent(),
+        }
+        status["recent_transactions"] = [
+            {
+                "to_peer": tx.to_peer,
+                "amount": tx.amount,
+                "timestamp": tx.timestamp,
+                "signed": bool(tx.signature),
+            }
+            for tx in _ledger.recent_transactions(5)
+        ]
+    return status
 
 
 @app.get("/aitorrent/credits")

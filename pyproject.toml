@@ -40,6 +40,9 @@ aitorrent = "aitorrent.api.cli:app"
 [tool.setuptools.packages.find]
 include = ["aitorrent*"]
 
+[tool.setuptools.package-data]
+aitorrent = ["api/static/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
